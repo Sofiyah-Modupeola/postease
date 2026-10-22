@@ -1,38 +1,46 @@
-res.setHeader('Access-Control-Allow-Origin', '*');
-res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+import { createClient } from '@supabase/supabase-js'
 
-if (req.method === 'OPTIONS') return res.status(200).end();
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY
+)
+
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') return res.status(200).end();
+  // --- CORS FIX - ALLOWS YOUR PHONE TO CONNECT ---
+  res.setHeader('Access-Control-Allow-Origin', '*')
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+  if (req.method === 'OPTIONS') return res.status(200).end()
+  // --- END CORS FIX ---
 
   try {
-    const { default: supabase } = await import('../lib/supabase.js');
-    if (!supabase) {
-      return res.json({ error: "Supabase env missing", env_url: !!process.env.SUPABASE_URL, env_key: !!process.env.SUPABASE_SERVICE_KEY });
+    if (req.method === 'GET') {
+      const { data, error } = await supabase.from('queue').select('*').order('created_at', { ascending: false }).limit(50)
+      if (error) throw error
+      return res.status(200).json(data || [])
     }
-    
+
     if (req.method === 'POST') {
-      const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
-      const { data, error } = await supabase.from('queue').insert({
-        caption: body.caption,
-        imageUrl: body.imageUrl,
-        scheduledAt: body.scheduledAt ? new Date(body.scheduledAt) : new Date(),
-        user_id: body.userId || '104675814724498',
-        status: 'queued'
-      }).select();
-      if (error) return res.status(500).json({ error: error.message });
-      return res.json({ success: true, data });
+      const { caption, imageUrl, scheduledAt, user_id, status } = req.body
+      
+      // Support both camelCase and snake_case
+      const payload = {
+        caption: caption || '',
+        imageUrl: imageUrl || null,
+        scheduledAt: scheduledAt || new Date().toISOString(),
+        imageurl: imageUrl || null,
+        scheduledat: scheduledAt || new Date().toISOString(),
+        user_id: user_id || 'sofiyah',
+        status: status || 'queued'
+      }
+
+      const { data, error } = await supabase.from('queue').insert([payload]).select()
+      if (error) throw error
+      return res.status(200).json({ success: true, data: data[0] })
     }
 
-    const { data, error } = await supabase.from('queue').select('*').order('scheduledAt', { ascending: false }).limit(20);
-    if (error) return res.status(500).json({ error: error.message, fix: "Did you run the SQL tables?" });
-    return res.json(data || []);
-
-  } catch (e) {
-    return res.status(500).json({ error: e.message, stack: e.stack?.slice(0,500) });
+    return res.status(405).json({ error: 'Method not allowed' })
+  } catch (err) {
+    return res.status(500).json({ error: err.message })
   }
 }
