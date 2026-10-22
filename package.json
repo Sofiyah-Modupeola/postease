@@ -1,9 +1,8 @@
 {
-  "name": "postease-backend",
-  "version": "2.0.0",
+  "name": "postease",
+  "version": "1.0.0",
   "type": "module",
   "dependencies": {
-    "@supabase/supabase-js": "^2.45.0",
-    "node-fetch": "^3.3.2"
+    "@supabase/supabase-js": "^2.45.0"
   }
 }
