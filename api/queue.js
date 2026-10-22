@@ -54,6 +54,10 @@ export default async function handler(req, res) {
         toggle_linkedin: b.toggleLinkedIn ?? true,
         toggle_ig: b.toggleIG ?? true,
         toggle_wa: b.toggleWA ?? true,
+        toggle_wa_biz: b.toggle_wa_biz ?? true,
+        wa_biz: b.wa_biz || null,
+        wa_phone_id: b.wa_phone_id || '',
+        linkedin: b.linkedIn || b.linkedin || null,
         all_pages: b.allPages || [],
         // For backward compatibility
         fb_page_ids: selectedPageIds
@@ -72,4 +76,4 @@ export default async function handler(req, res) {
   } catch (err) {
     return res.status(500).json({ error: err.message })
   }
-}
+          }
