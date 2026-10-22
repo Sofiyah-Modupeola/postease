@@ -1,40 +1,39 @@
-import supabase from '../lib/supabase.js';
-import { postToFacebook } from '../lib/facebook.js';
+import { createClient } from '@supabase/supabase-js'
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY
+)
 
 export default async function handler(req, res) {
-  // Allow manual trigger + Vercel cron
-  const now = new Date();
-  
-  // Get all queued posts that are due
-  const { data: queued, error } = await supabase
-    .from('queue')
-    .select('*, users!inner(fb_page_id, fb_page_token)')
-    .eq('status', 'queued')
-    .lte('scheduledAt', now.toISOString())
-    .limit(10);
+  try {
+    // 1. Get due posts — NO join, just queue table
+    const { data: queued, error } = await supabase
+      .from('queue')
+      .select('*')
+      .lte('scheduledAt', new Date().toISOString())
+      .eq('status', 'queued')
+      .order('scheduledAt', { ascending: true })
+      .limit(10)
 
-  if (error) return res.json({ error: error.message, queued: [] });
-  
-  if (!queued || queued.length === 0) {
-    return res.json({ success: true, message: 'No posts due', time: now });
-  }
+    if (error) throw error
 
-  let posted = 0;
-  for (const job of queued) {
-    const pageId = job.users?.fb_page_id || job.user_id;
-    const pageToken = job.users?.fb_page_token || process.env.FB_PAGE_TOKEN;
-    
-    if (!pageToken) continue;
-
-    const result = await postToFacebook(pageId, pageToken, job.caption, job.imageUrl);
-    
-    if (result.id || result.post_id) {
-      await supabase.from('queue').update({ status: 'posted', postedAt: now.toISOString() }).eq('id', job.id);
-      posted++;
-    } else {
-      await supabase.from('queue').update({ status: 'failed', error: JSON.stringify(result).slice(0, 500) }).eq('id', job.id);
+    if (!queued || queued.length === 0) {
+      return res.status(200).json({ message: 'No posts due', queued: [] })
     }
-  }
 
-  return res.json({ success: true, checked: queued.length, posted });
+    // 2. Here you would post to Facebook — for now just mark as done for test
+    // Comment this out later when you add Facebook posting logic
+    /*
+    for (let item of queued) {
+      // await postToFacebook(item)
+      await supabase.from('queue').update({ status: 'posted' }).eq('id', item.id)
+    }
+    */
+
+    return res.status(200).json({ message: 'Found posts', queued })
+
+  } catch (err) {
+    return res.status(500).json({ error: err.message, queued: [] })
+  }
 }
