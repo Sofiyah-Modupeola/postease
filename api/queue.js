@@ -6,7 +6,6 @@ const supabase = createClient(
 )
 
 export default async function handler(req, res) {
-  // CORS - Allow your frontend + any origin to connect
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
@@ -14,39 +13,59 @@ export default async function handler(req, res) {
 
   try {
     if (req.method === 'GET') {
-      const { data, error } = await supabase.from('queue').select('*').order('created_at', { ascending: false }).limit(50)
+      const { data, error } = await supabase.from('queue').select('*').order('created_at', { ascending: false }).limit(100)
       if (error) throw error
       return res.status(200).json(data || [])
     }
 
     if (req.method === 'POST') {
-      const body = req.body
-      // Build payload that supports ALL your goals: FB, IG, LinkedIn, WA Status
+      const b = req.body
+      
+      // Support multiple pages + personal + toggles
+      const selectedPages = b.selectedPages || b.selectedPageIds || []
+      const selectedPageIds = Array.isArray(selectedPages) ? selectedPages.map(p=> typeof p === 'string' ? p : p.id) : []
+      const includePersonal = b.includePersonal || b.personalEnabled || false
+
       const payload = {
-        caption: body.caption || '',
-        imageurl: body.imageUrl || (body.media && body.media[0]) || null,
-        imageUrl: body.imageUrl || (body.media && body.media[0]) || null,
-        media: body.media || [],
-        scheduledat: body.scheduledAt || body.scheduledat || new Date().toISOString(),
-        scheduledAt: body.scheduledAt || body.scheduledat || new Date().toISOString(),
-        status: body.status || 'queued',
-        user_id: body.user_id || body.userId || 'sofiyah-pure-merch',
-        // New fields for your full goals
-        business_name: body.businessName || body.bizName || '',
-        handle: body.handle || '',
-        about: body.about || body.aboutBiz || '',
-        type: body.type || 'Product Sales',
-        days: body.days || '',
-        time: body.time || body.postTime || '18:00',
-        platforms: body.platforms || 'All (FB+IG+LinkedIn+WA Status)',
-        // LinkedIn + WA specific
-        linkedin_status: body.platforms && body.platforms.toLowerCase().includes('linkedin') ? 'queued' : 'skipped',
-        whatsapp_status: body.platforms && (body.platforms.toLowerCase().includes('whatsapp') || body.platforms.toLowerCase().includes('wa') || body.platforms.toLowerCase().includes('all')) ? 'ready_to_share' : 'skipped'
+        caption: b.caption || '',
+        imageurl: b.imageUrl || (b.media && b.media[0]) || null,
+        imageUrl: b.imageUrl || (b.media && b.media[0]) || null,
+        media: b.media || [],
+        scheduledat: b.scheduledAt || new Date().toISOString(),
+        scheduledAt: b.scheduledAt || new Date().toISOString(),
+        status: b.status || 'queued',
+        user_id: b.user_id || 'sofiyah',
+        business_name: b.businessName || '',
+        main_prompt: b.mainPrompt || '',
+        cover_duration: b.coverDuration || '30',
+        posts_count: b.postsCount || '15',
+        handle: b.handle || '',
+        about: b.about || '',
+        type: b.type || 'Product Sales',
+        days: b.days || '',
+        time: b.time || '18:00',
+        platforms: b.platforms || 'All',
+        // NEW: multi-page support
+        selected_pages: selectedPages,
+        selected_page_ids: selectedPageIds,
+        selectedpages: selectedPages,
+        include_personal: includePersonal,
+        includepersonal: includePersonal,
+        toggle_linkedin: b.toggleLinkedIn ?? true,
+        toggle_ig: b.toggleIG ?? true,
+        toggle_wa: b.toggleWA ?? true,
+        all_pages: b.allPages || [],
+        // For backward compatibility
+        fb_page_ids: selectedPageIds
       }
 
       const { data, error } = await supabase.from('queue').insert([payload]).select()
       if (error) throw error
-      return res.status(200).json({ success: true, queued: data[0], message: 'Queued to FB + IG + LinkedIn + WA Status' })
+      return res.status(200).json({ 
+        success: true, 
+        queued: data[0],
+        message: `Queued to ${selectedPageIds.length} page(s) ${includePersonal ? '+ Personal' : ''} + LinkedIn/IG/WA toggles`
+      })
     }
 
     return res.status(405).json({ error: 'Method not allowed' })
