@@ -20,11 +20,9 @@ export default async function handler(req, res) {
 
     if (req.method === 'POST') {
       const b = req.body
-      
-      // Support multiple pages + personal + toggles
       const selectedPages = b.selectedPages || b.selectedPageIds || []
       const selectedPageIds = Array.isArray(selectedPages) ? selectedPages.map(p=> typeof p === 'string' ? p : p.id) : []
-      const includePersonal = b.includePersonal || b.personalEnabled || false
+      const includePersonal = b.includePersonal || false
 
       const payload = {
         caption: b.caption || '',
@@ -35,31 +33,14 @@ export default async function handler(req, res) {
         scheduledAt: b.scheduledAt || new Date().toISOString(),
         status: b.status || 'queued',
         user_id: b.user_id || 'sofiyah',
-        business_name: b.businessName || '',
         main_prompt: b.mainPrompt || '',
-        cover_duration: b.coverDuration || '30',
-        posts_count: b.postsCount || '15',
-        handle: b.handle || '',
-        about: b.about || '',
-        type: b.type || 'Product Sales',
-        days: b.days || '',
-        time: b.time || '18:00',
-        platforms: b.platforms || 'All',
-        // NEW: multi-page support
         selected_pages: selectedPages,
         selected_page_ids: selectedPageIds,
-        selectedpages: selectedPages,
         include_personal: includePersonal,
-        includepersonal: includePersonal,
-        toggle_linkedin: b.toggleLinkedIn ?? true,
-        toggle_ig: b.toggleIG ?? true,
-        toggle_wa: b.toggleWA ?? true,
-        toggle_wa_biz: b.toggle_wa_biz ?? true,
-        wa_biz: b.wa_biz || null,
-        wa_phone_id: b.wa_phone_id || '',
-        linkedin: b.linkedIn || b.linkedin || null,
-        all_pages: b.allPages || [],
-        // For backward compatibility
+        toggle_linkedin: b.toggle_linkedin ?? true,
+        toggle_ig: b.toggle_ig ?? true,
+        whatsapp_excluded: true,
+        linkedin: b.linkedIn || null,
         fb_page_ids: selectedPageIds
       }
 
@@ -68,7 +49,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ 
         success: true, 
         queued: data[0],
-        message: `Queued to ${selectedPageIds.length} page(s) ${includePersonal ? '+ Personal' : ''} + LinkedIn/IG/WA toggles`
+        message: `No WhatsApp mode - queued to ${selectedPageIds.length} page(s) + Personal (just name) + IG + LinkedIn`
       })
     }
 
@@ -76,4 +57,4 @@ export default async function handler(req, res) {
   } catch (err) {
     return res.status(500).json({ error: err.message })
   }
-          }
+}
