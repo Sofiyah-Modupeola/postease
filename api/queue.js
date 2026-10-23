@@ -38,14 +38,20 @@ export default async function handler(req, res) {
     if (req.method === 'POST') {
       const b = req.body
       const selectedPages = b.selectedPages || []
-      const selectedPageIds = selectedPages.map(p=> p.id || p).filter(id=> !String(id).startsWith('manual_') && !String(id).startsWith('me_') && id !== '104675814724498' ? true : true) // keep all
-      
+      const selectedPageIds = selectedPages.map(p=> p.id || p).filter(Boolean)
       const mediaUrls = b.mediaUrls || b.imageUrls || (b.imageUrl ? [b.imageUrl] : [])
       const imageUrls = b.imageUrls || b.mediaUrls || mediaUrls
+      
       const payload = {
         caption: b.caption || '',
-        imageurl: b.imageUrl || '',
+        imageurl: (imageUrls[0] || ''),
+        imageUrl: (imageUrls[0] || ''),
+        image_urls: imageUrls,
+        media_urls: mediaUrls,
+        media_count: mediaUrls.length,
+        num_images: mediaUrls.length,
         scheduledat: b.scheduledAt || new Date().toISOString(),
+        scheduledAt: b.scheduledAt || new Date().toISOString(),
         status: 'queued',
         user_id: b.user_id || 'sofiyah',
         main_prompt: b.mainPrompt || '',
@@ -54,14 +60,12 @@ export default async function handler(req, res) {
         post_time: b.postTime || '19:00',
         selected_pages: selectedPages,
         selected_page_ids: selectedPageIds,
-        include_personal: b.includePersonal || false,
         fb_page_ids: selectedPageIds,
-        imageUrl: b.imageUrl || '',
-        scheduledAt: b.scheduledAt || new Date().toISOString()
+        include_personal: b.includePersonal || false
       }
       const { data, error } = await supabase.from('queue').insert([payload]).select()
       if (error) throw error
-      return res.status(200).json({ success: true, queued: data[0], message: `Queued ${payload.num_days} days - ${payload.selected_days.join(',')} at ${payload.post_time} - Pages: ${selectedPageIds.join(',')}` })
+      return res.status(200).json({ success: true, queued: data[0], message: `Queued ${payload.num_days}d ${payload.selected_days.join(',')} - ${payload.num_images} images - Pages ${selectedPageIds.length}` })
     }
 
     return res.status(405).json({ error: 'Method not allowed' })
