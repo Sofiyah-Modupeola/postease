@@ -27,6 +27,8 @@ export default async function handler(req, res) {
         const pageIds = item.selected_page_ids || item.fb_page_ids || []
         const caption = item.caption || item.main_prompt || ''
         const imageUrl = item.imageurl || item.imageUrl || ''
+        const imageUrls = item.image_urls || item.media_urls || (imageUrl ? [imageUrl] : [])
+        const mediaCount = item.media_count || item.num_images || imageUrls.length
 
         // Get page tokens from users table or env
         // For now: if you have PAGE_ACCESS_TOKEN in env, use it; else check users table
@@ -56,7 +58,7 @@ export default async function handler(req, res) {
             }
           }
         } else {
-          console.log(`[PostEase v1] Item ${item.id} - Pages ${pageIds.join(',')} - Caption: ${caption.slice(0,50)} - Image: ${imageUrl ? 'yes' : 'no'} - Will auto when token added - Personal/IG/LI/WA via share buttons`)
+          console.log(`[PostEase v1] Item ${item.id} - Pages ${pageIds.join(',')} - Caption: ${caption.slice(0,50)} - Images: ${mediaCount} (${imageUrls.length} URLs) - Will auto when token added`)
         }
 
         // Mark as posted (or keep queued if you want retry)
