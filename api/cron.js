@@ -7,47 +7,62 @@ export default async function handler(req, res) {
   const tokenPresent = token.length > 20
   const tokenPreview = tokenPresent ? token.slice(0,25)+'...' : 'MISSING'
 
-  // Step 1: always return token check even if supabase fails - so we KNOW endpoint works
   try {
     const { createClient } = await import('@supabase/supabase-js')
     const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY
     
     if (!supabaseUrl || !supabaseKey) {
-      return res.status(200).json({ tokenPresent, tokenPreview, message: 'Supabase env missing', supabaseUrl: !!supabaseUrl, supabaseKey: !!supabaseKey })
+      return res.status(200).json({ tokenPresent, tokenPreview, message: 'Supabase env missing' })
     }
 
     const supabase = createClient(supabaseUrl, supabaseKey)
-    const now = new Date().toISOString()
     
-    const { data: queued, error } = await supabase
+    // Fetch all queued without date filter - then filter in JS to avoid column name case issues
+    const { data: allQueued, error } = await supabase
       .from('queue')
       .select('*')
-      .lte('scheduledat', now)
       .eq('status', 'queued')
-      .limit(5)
+      .order('created_at', { ascending: false })
+      .limit(20)
 
     if (error) {
-      return res.status(200).json({ tokenPresent, tokenPreview, message: 'Supabase query error', error: error.message })
+      return res.status(200).json({ tokenPresent, tokenPreview, error: error.message })
     }
 
-    if (!queued || queued.length === 0) {
-      return res.status(200).json({ tokenPresent, tokenPreview, message: 'No posts due - endpoint WORKS', now, processed: 0 })
+    const now = new Date()
+    // Filter: scheduledat OR scheduledAt <= now
+    const due = (allQueued || []).filter(item => {
+      const t = item.scheduledat || item.scheduledAt || item.scheduled_at || null
+      if (!t) return true // if no time, consider due
+      try {
+        return new Date(t) <= now
+      } catch { return true }
+    })
+
+    if (due.length === 0) {
+      return res.status(200).json({ 
+        tokenPresent, tokenPreview, 
+        message: `No posts due - endpoint WORKS - found ${allQueued?.length || 0} queued total, but none past time`, 
+        now: now.toISOString(), 
+        allQueuedCount: allQueued?.length || 0,
+        sampleTimes: (allQueued || []).slice(0,3).map(q=>({ id: q.id, scheduledat: q.scheduledat, scheduledAt: q.scheduledAt }))
+      })
     }
 
     let results = []
-    for (let item of queued) {
-      const pageIds = item.selected_page_ids || item.fb_page_ids || []
-      const caption = item.caption || item.main_prompt || item.text || 'Test from PostEase'
+    for (let item of due) {
+      const pageIds = item.selected_page_ids || item.fb_page_ids || item.selected_pages?.map(p=>p.id) || ['104675814724498']
+      const caption = item.caption || item.main_prompt || 'Test from PostEase - Die Empty'
       
       for (let pid of pageIds) {
-        if (!pid || String(pid).startsWith('manual_')) continue
+        if (!pid || String(pid).startsWith('manual_') || String(pid).startsWith('me_')) continue
+        if (!tokenPresent) {
+          results.push({ pid, error: 'No FB token set' })
+          continue
+        }
         try {
-          if (!tokenPresent) {
-            results.push({ pid, error: 'No FB token' })
-            continue
-          }
-          // Simplest post - text only first to prove token works
+          // Text-only post for now to prove token works (image upload next step after this works)
           const fbRes = await fetch(`https://graph.facebook.com/v19.0/${pid}/feed`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -57,6 +72,9 @@ export default async function handler(req, res) {
           results.push({ pid, fb: fbJson })
           if (fbJson.id) {
             await supabase.from('queue').update({ status: 'posted' }).eq('id', item.id)
+          } else {
+            // Save error for debug
+            await supabase.from('queue').update({ status: 'failed' }).eq('id', item.id)
           }
         } catch (e) {
           results.push({ pid, error: e.message })
@@ -64,10 +82,9 @@ export default async function handler(req, res) {
       }
     }
 
-    return res.status(200).json({ tokenPresent, tokenPreview, message: 'Cron ran', processed: queued.length, results })
+    return res.status(200).json({ tokenPresent, tokenPreview, message: `Cron ran - found ${due.length} due`, now: now.toISOString(), dueCount: due.length, results })
 
   } catch (err) {
-    // NEVER 500 - always return 200 with error message
-    return res.status(200).json({ tokenPresent, tokenPreview, error: err.message, stack: err.stack?.slice(0,500), note: 'Endpoint alive but error inside' })
+    return res.status(200).json({ tokenPresent, tokenPreview, error: err.message, note: 'Endpoint alive' })
   }
 }
