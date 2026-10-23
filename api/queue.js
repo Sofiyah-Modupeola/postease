@@ -23,7 +23,7 @@ export default async function handler(req, res) {
       if (!id) return res.status(400).json({ error: 'id required' })
       const { error } = await supabase.from('queue').delete().eq('id', id)
       if (error) throw error
-      return res.status(200).json({ success: true })
+      return res.status(200).json({ success: true, message: 'Deleted - halted' })
     }
 
     if (req.method === 'PATCH') {
@@ -37,34 +37,34 @@ export default async function handler(req, res) {
 
     if (req.method === 'POST') {
       const b = req.body
-      // ONLY use columns that exist in your current queue table - safe minimal payload
+      const selectedPages = b.selectedPages || []
+      const selectedPageIds = selectedPages.map(p=> p.id || p).filter(id=> !String(id).startsWith('manual_') && !String(id).startsWith('me_'))
+      
       const payload = {
         caption: b.caption || '',
-        imageurl: b.imageUrl || '',
+        imageurl: b.imageUrl || (b.media && b.media[0]) || null,
+        imageUrl: b.imageUrl || (b.media && b.media[0]) || null,
         scheduledat: b.scheduledAt || new Date().toISOString(),
+        scheduledAt: b.scheduledAt || new Date().toISOString(),
         status: 'queued',
-        user_id: b.user_id || 'sofiyah'
+        user_id: b.user_id || 'sofiyah',
+        main_prompt: b.mainPrompt || '',
+        num_days: b.numDays || 7,
+        selected_days: b.selectedDays || ['Mon','Fri'],
+        post_time: b.postTime || '19:00',
+        selected_pages: selectedPages,
+        selected_page_ids: selectedPageIds,
+        include_personal: b.includePersonal || false,
+        fb_page_ids: selectedPageIds,
+        media: b.media || []
       }
-      // Try minimal insert first
-      let { data, error } = await supabase.from('queue').insert([payload]).select()
-      if (error) {
-        // Fallback: try alternative column names if your table uses camelCase
-        const altPayload = {
-          caption: b.caption || '',
-          imageUrl: b.imageUrl || '',
-          scheduledAt: b.scheduledAt || new Date().toISOString(),
-          status: 'queued',
-          user_id: b.user_id || 'sofiyah'
-        }
-        const retry = await supabase.from('queue').insert([altPayload]).select()
-        if (retry.error) throw retry.error
-        data = retry.data
-      }
-      return res.status(200).json({ success: true, queued: data[0], message: `Queued - ${b.numDays||7} days ${b.selectedDays?.join(',')||''} - Halt anytime` })
+      const { data, error } = await supabase.from('queue').insert([payload]).select()
+      if (error) throw error
+      return res.status(200).json({ success: true, queued: data[0], message: `Queued ${payload.num_days} days - ${payload.selected_days.join(',')} at ${payload.post_time} - Pages: ${selectedPageIds.join(',')} - Halt anytime` })
     }
 
     return res.status(405).json({ error: 'Method not allowed' })
   } catch (err) {
     return res.status(500).json({ error: err.message })
   }
-  }
+}
