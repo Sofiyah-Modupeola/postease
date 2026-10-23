@@ -18,25 +18,14 @@ export default async function handler(req, res) {
       .limit(20)
 
     if (error) throw error
-    if (!queued?.length) return res.status(200).json({ message: 'No posts due', queued: [] })
+    if (!queued?.length) return res.status(200).json({ message: 'No posts due - WhatsApp excluded', queued: [] })
 
     for (let item of queued) {
-      const pageIds = item.selected_page_ids || item.fb_page_ids || []
-      const includePersonal = item.include_personal || false
-      
-      console.log(`[ZERO TOKEN] Post ${item.id}: Pages ${pageIds.join(',')} - ${pageIds.map(id=>`Real page ${id}`).join(',')} Personal: ${includePersonal ? 'Just name, no suffix' : 'No'}`)
-      console.log(`[ZERO TOKEN] LinkedIn: ${item.linkedin?.name || 'Not connected'} - identifies via OAuth, no token paste for users`)
-      console.log(`[ZERO TOKEN] WA Business Auto: ${item.wa_phone_id ? 'Auto via Business API - admin config, users just toggle' : 'No'} | WA Ordinary: Manual share - initial plan`)
-
-      // Zero token logic:
-      // FB Pages: auto via Page tokens obtained via OAuth, no user paste
-      // LinkedIn: auto via OAuth token, no user paste - identifies which LI account
-      // WA Business: auto via admin Phone ID + Token, users just toggle ON/OFF - no paste for users
-      // WA Ordinary: manual share - wa.me/?text= - no token
-      // Personal FB: Share Dialog - just name, no suffix
+      const pageIds = item.selected_page_ids || []
+      console.log(`[NO WA MODE] Post ${item.id}: Pages ${pageIds.join(',')} - Personal just name no suffix - IG via Pages - LinkedIn - No WhatsApp`)
     }
 
-    return res.status(200).json({ message: `${queued.length} processed - Zero token for users, real pages, accurate identification`, queued })
+    return res.status(200).json({ message: `${queued.length} processed - No WhatsApp - FB Pages + Personal + IG + LinkedIn only`, queued })
   } catch (err) {
     return res.status(500).json({ error: err.message })
   }
