@@ -1,4 +1,3 @@
-
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*')
   if (req.method === 'OPTIONS') return res.status(200).end()
@@ -18,7 +17,6 @@ export default async function handler(req, res) {
 
     const supabase = createClient(supabaseUrl, supabaseKey)
     
-    // Fetch all queued without date filter - then filter in JS to avoid column name case issues
     const { data: allQueued, error } = await supabase
       .from('queue')
       .select('*')
@@ -31,58 +29,82 @@ export default async function handler(req, res) {
     }
 
     const now = new Date()
-    // Filter: scheduledat OR scheduledAt <= now
     const due = (allQueued || []).filter(item => {
       const t = item.scheduledat || item.scheduledAt || item.scheduled_at || null
-      if (!t) return true // if no time, consider due
-      try {
-        return new Date(t) <= now
-      } catch { return true }
+      if (!t) return true
+      try { return new Date(t) <= now } catch { return true }
     })
 
     if (due.length === 0) {
       return res.status(200).json({ 
         tokenPresent, tokenPreview, 
-        message: `No posts due - endpoint WORKS - found ${allQueued?.length || 0} queued total, but none past time`, 
+        message: `No posts due - found ${allQueued?.length || 0} queued total`, 
         now: now.toISOString(), 
-        allQueuedCount: allQueued?.length || 0,
-        sampleTimes: (allQueued || []).slice(0,3).map(q=>({ id: q.id, scheduledat: q.scheduledat, scheduledAt: q.scheduledAt }))
+        allQueuedCount: allQueued?.length || 0
       })
     }
 
+    // STEP 1: Find which page this token belongs to
+    let realPageId = null
+    let realPageName = null
+    try {
+      const meRes = await fetch(`https://graph.facebook.com/v19.0/me?fields=id,name&access_token=${encodeURIComponent(token)}`)
+      const meJson = await meRes.json()
+      if (meJson.id) {
+        realPageId = meJson.id
+        realPageName = meJson.name
+      }
+    } catch(e){}
+
     let results = []
     for (let item of due) {
-      const pageIds = item.selected_page_ids || item.fb_page_ids || item.selected_pages?.map(p=>p.id) || ['104675814724498']
-      const caption = item.caption || item.main_prompt || 'Test from PostEase - Die Empty'
+      const caption = item.caption || item.main_prompt || 'Die Empty - PostEase test'
       
-      for (let pid of pageIds) {
-        if (!pid || String(pid).startsWith('manual_') || String(pid).startsWith('me_')) continue
-        if (!tokenPresent) {
-          results.push({ pid, error: 'No FB token set' })
-          continue
+      if (!tokenPresent) {
+        results.push({ error: 'No FB token set' })
+        continue
+      }
+
+      // Try 3 ways: realPageId, me/feed, and stored IDs
+      const targets = []
+      if (realPageId) targets.push(realPageId)
+      targets.push('me')
+      const storedIds = item.selected_page_ids || item.fb_page_ids || []
+      for (let sid of storedIds) {
+        if (sid && !String(sid).startsWith('manual_') && !String(sid).startsWith('me_') && !targets.includes(sid)) {
+          targets.push(sid)
         }
+      }
+      if (targets.length === 0) targets.push('me')
+
+      let posted = false
+      for (let targetId of targets.slice(0,1)) { // Only post once per item to avoid duplicates - use token's own page
         try {
-          // Text-only post for now to prove token works (image upload next step after this works)
-          const fbRes = await fetch(`https://graph.facebook.com/v19.0/${pid}/feed`, {
+          const fbRes = await fetch(`https://graph.facebook.com/v19.0/${targetId}/feed`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ access_token: token, message: caption })
           })
           const fbJson = await fbRes.json()
-          results.push({ pid, fb: fbJson })
+          results.push({ targetId, realPageId, realPageName, fb: fbJson })
           if (fbJson.id) {
             await supabase.from('queue').update({ status: 'posted' }).eq('id', item.id)
+            posted = true
+            break
           } else {
-            // Save error for debug
-            await supabase.from('queue').update({ status: 'failed' }).eq('id', item.id)
+            // don't mark failed yet, try next target if any
+            if (targetId === targets[0]) continue
           }
         } catch (e) {
-          results.push({ pid, error: e.message })
+          results.push({ targetId, error: e.message })
         }
+      }
+      if (!posted && results[results.length-1]?.fb?.error) {
+        await supabase.from('queue').update({ status: 'failed' }).eq('id', item.id)
       }
     }
 
-    return res.status(200).json({ tokenPresent, tokenPreview, message: `Cron ran - found ${due.length} due`, now: now.toISOString(), dueCount: due.length, results })
+    return res.status(200).json({ tokenPresent, tokenPreview, message: `Cron ran - found ${due.length} due`, realPageId, realPageName, now: now.toISOString(), dueCount: due.length, results })
 
   } catch (err) {
     return res.status(200).json({ tokenPresent, tokenPreview, error: err.message, note: 'Endpoint alive' })
