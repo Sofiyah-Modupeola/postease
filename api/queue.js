@@ -23,7 +23,7 @@ export default async function handler(req, res) {
       if (!id) return res.status(400).json({ error: 'id required' })
       const { error } = await supabase.from('queue').delete().eq('id', id)
       if (error) throw error
-      return res.status(200).json({ success: true, message: 'Deleted - halted' })
+      return res.status(200).json({ success: true })
     }
 
     if (req.method === 'PATCH') {
@@ -38,14 +38,14 @@ export default async function handler(req, res) {
     if (req.method === 'POST') {
       const b = req.body
       const selectedPages = b.selectedPages || []
-      const selectedPageIds = selectedPages.map(p=> p.id || p).filter(id=> !String(id).startsWith('manual_') && !String(id).startsWith('me_'))
+      const selectedPageIds = selectedPages.map(p=> p.id || p).filter(id=> !String(id).startsWith('manual_') && !String(id).startsWith('me_') && id !== '104675814724498' ? true : true) // keep all
       
+      const mediaUrls = b.mediaUrls || b.imageUrls || (b.imageUrl ? [b.imageUrl] : [])
+      const imageUrls = b.imageUrls || b.mediaUrls || mediaUrls
       const payload = {
         caption: b.caption || '',
-        imageurl: b.imageUrl || (b.media && b.media[0]) || null,
-        imageUrl: b.imageUrl || (b.media && b.media[0]) || null,
+        imageurl: b.imageUrl || '',
         scheduledat: b.scheduledAt || new Date().toISOString(),
-        scheduledAt: b.scheduledAt || new Date().toISOString(),
         status: 'queued',
         user_id: b.user_id || 'sofiyah',
         main_prompt: b.mainPrompt || '',
@@ -56,11 +56,12 @@ export default async function handler(req, res) {
         selected_page_ids: selectedPageIds,
         include_personal: b.includePersonal || false,
         fb_page_ids: selectedPageIds,
-        media: b.media || []
+        imageUrl: b.imageUrl || '',
+        scheduledAt: b.scheduledAt || new Date().toISOString()
       }
       const { data, error } = await supabase.from('queue').insert([payload]).select()
       if (error) throw error
-      return res.status(200).json({ success: true, queued: data[0], message: `Queued ${payload.num_days} days - ${payload.selected_days.join(',')} at ${payload.post_time} - Pages: ${selectedPageIds.join(',')} - Halt anytime` })
+      return res.status(200).json({ success: true, queued: data[0], message: `Queued ${payload.num_days} days - ${payload.selected_days.join(',')} at ${payload.post_time} - Pages: ${selectedPageIds.join(',')}` })
     }
 
     return res.status(405).json({ error: 'Method not allowed' })
