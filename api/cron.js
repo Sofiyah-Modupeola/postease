@@ -5,20 +5,14 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-function dataUrlToBlobParts(dataUrl){
-  const match = dataUrl.match(/^data:(.*?);base64,(.*)$/)
-  if(!match) return null
-  const mime = match[1]
-  const b64 = match[2]
-  const buffer = Buffer.from(b64, 'base64')
-  return { mime, buffer }
-}
-
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*')
   if (req.method === 'OPTIONS') return res.status(200).end()
 
   try {
+    const token = process.env.FB_PAGE_ACCESS_TOKEN || process.env.FB_PAGE_TOKEN || null
+    const tokenPresent = !!token
+
     const now = new Date().toISOString()
     const { data: queued, error } = await supabase
       .from('queue')
@@ -28,111 +22,89 @@ export default async function handler(req, res) {
       .limit(20)
 
     if (error) throw error
-    if (!queued?.length) return res.status(200).json({ message: 'No posts due', processed: 0, queued: [], tokenPresent: !!(process.env.FB_PAGE_ACCESS_TOKEN || process.env.FB_PAGE_TOKEN) })
+    if (!queued?.length) {
+      return res.status(200).json({ message: 'No posts due', processed: 0, tokenPresent, hint: tokenPresent ? 'Token found as FB_PAGE_TOKEN or FB_PAGE_ACCESS_TOKEN' : 'Missing FB_PAGE_TOKEN - set in Vercel' })
+    }
 
     let processed = 0
-    const tokenPresent = !!(process.env.FB_PAGE_ACCESS_TOKEN || process.env.FB_PAGE_TOKEN)
-    const tokenPreview = tokenPresent ? (process.env.FB_PAGE_ACCESS_TOKEN || process.env.FB_PAGE_TOKEN).slice(0,20)+'...' : 'MISSING - set FB_PAGE_TOKEN or FB_PAGE_ACCESS_TOKEN in Vercel env and redeploy'
-
+    let results = []
+    
     for (let item of queued) {
       try {
-        const pageIds = item.selected_page_ids || item.fb_page_ids || item.selected_pages?.map(p=>p.id) || []
+        const pageIds = item.selected_page_ids || item.fb_page_ids || []
         const caption = item.caption || item.main_prompt || ''
         const imageUrl = item.imageurl || item.imageUrl || ''
         const imageUrls = item.image_urls || item.media_urls || (imageUrl ? [imageUrl] : [])
-        const fbToken = process.env.FB_PAGE_ACCESS_TOKEN || process.env.FB_PAGE_TOKEN || null
+        const firstImg = imageUrls[0] || imageUrl || ''
 
         let fbResults = []
-        if (pageIds.length && fbToken && imageUrls.length) {
+
+        if (pageIds.length && token) {
           for (let pid of pageIds) {
-            if (!pid || String(pid).startsWith('manual_') || String(pid).startsWith('me')) continue
-            // Post up to 10 images - Facebook: first image as photo post, or album
+            if (!pid || String(pid).startsWith('manual_')) continue
             try {
-              // If image is data: URL (base64 from PostEase compression) - upload via multipart
-              const firstImg = imageUrls[0] || imageUrl
+              let fbJson = null
+              
+              // Handle base64 data: URLs - convert to buffer upload
               if (firstImg && firstImg.startsWith('data:')) {
-                const parts = dataUrlToBlobParts(firstImg)
-                if (parts) {
-                  // Build multipart form manually using fetch FormData (Node 18+ supports FormData)
+                try {
+                  // Convert data URL to blob via fetch (works in Node 18)
+                  const base64Data = firstImg.split(',')[1]
+                  const mime = firstImg.split(';')[0].split(':')[1]
+                  const buffer = Buffer.from(base64Data, 'base64')
+                  
+                  // Use form-data manually via native FormData
                   const form = new FormData()
                   form.append('caption', caption)
-                  form.append('access_token', fbToken)
-                  const blob = new Blob([parts.buffer], { type: parts.mime })
+                  form.append('access_token', token)
+                  const blob = new Blob([buffer], { type: mime })
                   form.append('source', blob, 'postease.jpg')
                   
                   const fbRes = await fetch(`https://graph.facebook.com/v19.0/${pid}/photos`, {
                     method: 'POST',
                     body: form
                   })
-                  const fbJson = await fbRes.json()
-                  fbResults.push({ pid, result: fbJson, method: 'base64-upload' })
-                  
-                  // If multiple images, upload rest as unpublished then create feed with attached_media
-                  if (imageUrls.length > 1) {
-                    let attachedIds = []
-                    if (fbJson.id) attachedIds.push(fbJson.id)
-                    for (let i=1; i<Math.min(imageUrls.length, 10); i++) {
-                      const img = imageUrls[i]
-                      if (!img || !img.startsWith('data:')) continue
-                      const p = dataUrlToBlobParts(img)
-                      if (!p) continue
-                      const f2 = new FormData()
-                      f2.append('access_token', fbToken)
-                      f2.append('published', 'false')
-                      const bl = new Blob([p.buffer], { type: p.mime })
-                      f2.append('source', bl, `postease_${i}.jpg`)
-                      const r2 = await fetch(`https://graph.facebook.com/v19.0/${pid}/photos`, { method: 'POST', body: f2 })
-                      const j2 = await r2.json()
-                      if (j2.id) attachedIds.push(j2.id)
-                    }
-                    if (attachedIds.length > 1) {
-                      const feedForm = new FormData()
-                      feedForm.append('access_token', fbToken)
-                      feedForm.append('message', caption)
-                      attachedIds.forEach((id, idx)=>{
-                        feedForm.append(`attached_media[${idx}]`, JSON.stringify({ media_fbid: id }))
-                      })
-                      const feedRes = await fetch(`https://graph.facebook.com/v19.0/${pid}/feed`, { method: 'POST', body: feedForm })
-                      const feedJson = await feedRes.json()
-                      fbResults.push({ pid, album: feedJson })
-                    }
-                  }
+                  fbJson = await fbRes.json()
+                } catch (e) {
+                  fbResults.push({ pid, method: 'base64', error: e.message })
+                  continue
                 }
               } else if (firstImg && firstImg.startsWith('http')) {
-                // Remote URL - use url param
-                const fbRes = await fetch(`https://graph.facebook.com/v19.0/${pid}/photos?access_token=${fbToken}`, {
+                const fbRes = await fetch(`https://graph.facebook.com/v19.0/${pid}/photos`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ url: firstImg, caption: caption })
+                  body: JSON.stringify({ access_token: token, url: firstImg, caption: caption })
                 })
-                const fbJson = await fbRes.json()
-                fbResults.push({ pid, result: fbJson, method: 'url' })
-              } else if (!firstImg) {
-                // Text-only post
-                const fbRes = await fetch(`https://graph.facebook.com/v19.0/${pid}/feed?access_token=${fbToken}`, {
+                fbJson = await fbRes.json()
+              } else {
+                // Text only
+                const fbRes = await fetch(`https://graph.facebook.com/v19.0/${pid}/feed`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ message: caption })
+                  body: JSON.stringify({ access_token: token, message: caption })
                 })
-                const fbJson = await fbRes.json()
-                fbResults.push({ pid, result: fbJson, method: 'text-only' })
+                fbJson = await fbRes.json()
               }
+              fbResults.push({ pid, result: fbJson })
             } catch (e) {
               fbResults.push({ pid, error: e.message })
             }
           }
+        } else {
+          fbResults.push({ note: !token ? 'No token - set FB_PAGE_TOKEN in Vercel' : 'No pageIds' })
         }
 
-        // Mark as posted
-        await supabase.from('queue').update({ status: 'posted', fb_response: fbResults }).eq('id', item.id)
+        results.push({ id: item.id, fbResults })
+        await supabase.from('queue').update({ status: 'posted' }).eq('id', item.id)
         processed++
       } catch (innerErr) {
-        await supabase.from('queue').update({ status: 'failed', error: innerErr.message }).eq('id', item.id)
+        await supabase.from('queue').update({ status: 'failed' }).eq('id', item.id)
+        results.push({ id: item.id, error: innerErr.message })
       }
     }
 
-    return res.status(200).json({ message: `${processed} processed - tokenPresent: ${tokenPresent} - ${tokenPreview}`, processed, tokenPresent, tokenPreview, queued: queued.length })
+    return res.status(200).json({ message: `${processed} processed`, processed, tokenPresent, results })
   } catch (err) {
-    return res.status(500).json({ error: err.message })
+    return res.status(500).json({ error: err.message, stack: err.stack })
   }
-}
+                  }
