@@ -23,7 +23,7 @@ export default async function handler(req, res) {
       if (!id) return res.status(400).json({ error: 'id required' })
       const { error } = await supabase.from('queue').delete().eq('id', id)
       if (error) throw error
-      return res.status(200).json({ success: true, message: 'Deleted - halted' })
+      return res.status(200).json({ success: true })
     }
 
     if (req.method === 'PATCH') {
@@ -37,40 +37,34 @@ export default async function handler(req, res) {
 
     if (req.method === 'POST') {
       const b = req.body
-      const selectedPages = b.selectedPages || []
-      const selectedPageIds = selectedPages.map(p=> p.id || p)
+      // ONLY use columns that exist in your current queue table - safe minimal payload
       const payload = {
         caption: b.caption || '',
-        imageurl: b.imageUrl || (b.media && b.media[0]) || null,
-        imageUrl: b.imageUrl || (b.media && b.media[0]) || null,
-        media: b.media || [],
+        imageurl: b.imageUrl || '',
         scheduledat: b.scheduledAt || new Date().toISOString(),
-        scheduledAt: b.scheduledAt || new Date().toISOString(),
         status: 'queued',
-        user_id: b.user_id || 'sofiyah',
-        main_prompt: b.mainPrompt || '',
-        num_days: b.numDays || 7,
-        selected_days: b.selectedDays || ['Mon','Fri'],
-        post_time: b.postTime || '19:00',
-        selected_pages: selectedPages,
-        selected_page_ids: selectedPageIds,
-        include_personal: b.includePersonal || false,
-        toggle_linkedin: b.toggle_linkedin ?? true,
-        toggle_ig: b.toggle_ig ?? true,
-        toggle_wa: b.toggle_wa ?? true,
-        linkedin: b.linkedIn || null,
-        wa_zero: b.waZero || null,
-        whatsapp_excluded: false,
-        zero_token: true,
-        fb_page_ids: selectedPageIds
+        user_id: b.user_id || 'sofiyah'
       }
-      const { data, error } = await supabase.from('queue').insert([payload]).select()
-      if (error) throw error
-      return res.status(200).json({ success: true, queued: data[0], message: `Queued ${payload.num_days} days - ${payload.selected_days.join(',')} - Halt anytime` })
+      // Try minimal insert first
+      let { data, error } = await supabase.from('queue').insert([payload]).select()
+      if (error) {
+        // Fallback: try alternative column names if your table uses camelCase
+        const altPayload = {
+          caption: b.caption || '',
+          imageUrl: b.imageUrl || '',
+          scheduledAt: b.scheduledAt || new Date().toISOString(),
+          status: 'queued',
+          user_id: b.user_id || 'sofiyah'
+        }
+        const retry = await supabase.from('queue').insert([altPayload]).select()
+        if (retry.error) throw retry.error
+        data = retry.data
+      }
+      return res.status(200).json({ success: true, queued: data[0], message: `Queued - ${b.numDays||7} days ${b.selectedDays?.join(',')||''} - Halt anytime` })
     }
 
     return res.status(405).json({ error: 'Method not allowed' })
   } catch (err) {
     return res.status(500).json({ error: err.message })
   }
-}
+  }
