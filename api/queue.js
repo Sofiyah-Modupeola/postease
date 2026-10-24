@@ -70,12 +70,18 @@ export default async function handler(req, res) {
       const mediaUrls = b.mediaUrls || b.imageUrls || (b.imageUrl ? [b.imageUrl] : [])
       const imageUrls = b.imageUrls || b.mediaUrls || mediaUrls
       
-      const numDays = Math.min(Math.max(parseInt(b.numDays)||1, 1), 365) // clamp 1-365
+      const numDays = Math.min(Math.max(parseInt(b.numDays)||1, 1), 365)
       const selectedDays = b.selectedDays || []
       const postTime = b.postTime || '19:00'
       const startDate = b.scheduledAt ? new Date(b.scheduledAt) : new Date()
       
-      const dates = generateScheduledDates(startDate, numDays, selectedDays, postTime)
+      let dates = []
+      // FIX: If numDays == 1, use exact scheduledAt time user picked (no timezone shift)
+      if (numDays === 1) {
+        dates = [startDate]
+      } else {
+        dates = generateScheduledDates(startDate, numDays, selectedDays, postTime)
+      }
       
       const payloads = dates.map((d) => ({
         caption: b.caption || '',
