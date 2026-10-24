@@ -124,11 +124,27 @@ export default async function handler(req, res) {
           }
         }
 
+        // If image post failed, try fallback to text-only
+        if(fbJson && fbJson.error && imageUrls.length>0){
+          try{
+            const fallback = await fetch(`https://graph.facebook.com/v19.0/${targetId}/feed`,{
+              method:'POST', headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({access_token:token, message:caption + "\n\n[Image upload failed - text posted]"})
+            })
+            const fbFallback = await fallback.json()
+            if(fbFallback.id || fbFallback.post_id){
+              fbJson = fbFallback
+            }
+          }catch{}
+        }
+
         results.push({targetId, realPageId, realPageName, imageCount:imageUrls.length, fb:fbJson})
         if(fbJson && (fbJson.id || fbJson.post_id)){
           await supabase.from('queue').update({status:'posted'}).eq('id',item.id)
         } else if(fbJson && fbJson.error){
-          await supabase.from('queue').update({status:'failed'}).eq('id',item.id)
+          // Keep as queued for retry instead of failed, so you can retry
+          // await supabase.from('queue').update({status:'failed'}).eq('id',item.id)
+          results.push({note:"Will retry next cron - not marking failed to allow retry"})
         }
 
       }catch(e){
