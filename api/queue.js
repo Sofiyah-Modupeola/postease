@@ -77,7 +77,7 @@ export default async function handler(req, res) {
       
       const dates = generateScheduledDates(startDate, numDays, selectedDays, postTime)
       
-      const payloads = dates.map((d, idx) => ({
+      const payloads = dates.map((d) => ({
         caption: b.caption || '',
         imageurl: (imageUrls[0] || ''),
         imageUrl: (imageUrls[0] || ''),
@@ -96,9 +96,7 @@ export default async function handler(req, res) {
         selected_pages: selectedPages,
         selected_page_ids: selectedPageIds,
         fb_page_ids: selectedPageIds,
-        include_personal: b.includePersonal || false,
-        batch_index: idx+1,
-        batch_total: dates.length
+        include_personal: b.includePersonal || false
       }))
 
       const { data, error } = await supabase.from('queue').insert(payloads).select()
