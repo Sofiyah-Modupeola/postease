@@ -1,9 +1,37 @@
+
 import { createClient } from '@supabase/supabase-js'
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY
 )
+
+const DAY_MAP = { Sun:0, Mon:1, Tue:2, Wed:3, Thu:4, Fri:5, Sat:6 }
+
+function generateScheduledDates(startDate, numDays, selectedDays, postTime) {
+  // startDate: Date object, numDays: int, selectedDays: array like ['Mon','Fri'], postTime: "19:00"
+  const result = []
+  const [hh, mm] = (postTime || '19:00').split(':').map(Number)
+  let cur = new Date(startDate)
+  cur.setHours(hh||19, mm||0, 0, 0)
+  
+  // If no selectedDays or empty, treat as daily
+  const wanted = selectedDays && selectedDays.length ? selectedDays.map(d=>DAY_MAP[d]).filter(v=>v!==undefined) : [0,1,2,3,4,5,6]
+  
+  // Generate up to numDays occurrences that match wanted days
+  // Safety cap: look ahead max 2 years (730 days) to avoid infinite loop
+  let checked = 0
+  while (result.length < numDays && checked < 800) {
+    const dow = cur.getDay()
+    if (wanted.includes(dow)) {
+      // Only include if time is in future relative to now (if first day is today but time already passed, skip to next matching day)
+      result.push(new Date(cur))
+    }
+    cur.setDate(cur.getDate()+1)
+    checked++
+  }
+  return result
+}
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*')
@@ -13,7 +41,7 @@ export default async function handler(req, res) {
 
   try {
     if (req.method === 'GET') {
-      const { data, error } = await supabase.from('queue').select('*').order('created_at', { ascending: false }).limit(100)
+      const { data, error } = await supabase.from('queue').select('*').order('created_at', { ascending: false }).limit(200)
       if (error) throw error
       return res.status(200).json(data || [])
     }
@@ -42,7 +70,14 @@ export default async function handler(req, res) {
       const mediaUrls = b.mediaUrls || b.imageUrls || (b.imageUrl ? [b.imageUrl] : [])
       const imageUrls = b.imageUrls || b.mediaUrls || mediaUrls
       
-      const payload = {
+      const numDays = Math.min(Math.max(parseInt(b.numDays)||1, 1), 365) // clamp 1-365
+      const selectedDays = b.selectedDays || []
+      const postTime = b.postTime || '19:00'
+      const startDate = b.scheduledAt ? new Date(b.scheduledAt) : new Date()
+      
+      const dates = generateScheduledDates(startDate, numDays, selectedDays, postTime)
+      
+      const payloads = dates.map((d, idx) => ({
         caption: b.caption || '',
         imageurl: (imageUrls[0] || ''),
         imageUrl: (imageUrls[0] || ''),
@@ -50,26 +85,29 @@ export default async function handler(req, res) {
         media_urls: mediaUrls,
         media_count: mediaUrls.length,
         num_images: mediaUrls.length,
-        scheduledat: b.scheduledAt || new Date().toISOString(),
-        scheduledAt: b.scheduledAt || new Date().toISOString(),
+        scheduledat: d.toISOString(),
+        scheduledAt: d.toISOString(),
         status: 'queued',
         user_id: b.user_id || 'sofiyah',
         main_prompt: b.mainPrompt || '',
-        num_days: b.numDays || 7,
-        selected_days: b.selectedDays || ['Mon','Fri'],
-        post_time: b.postTime || '19:00',
+        num_days: numDays,
+        selected_days: selectedDays,
+        post_time: postTime,
         selected_pages: selectedPages,
         selected_page_ids: selectedPageIds,
         fb_page_ids: selectedPageIds,
-        include_personal: b.includePersonal || false
-      }
-      const { data, error } = await supabase.from('queue').insert([payload]).select()
+        include_personal: b.includePersonal || false,
+        batch_index: idx+1,
+        batch_total: dates.length
+      }))
+
+      const { data, error } = await supabase.from('queue').insert(payloads).select()
       if (error) throw error
-      return res.status(200).json({ success: true, queued: data[0], message: `Queued ${payload.num_days}d ${payload.selected_days.join(',')} - ${payload.num_images} images - Pages ${selectedPageIds.length}` })
+      return res.status(200).json({ success: true, queued: data, count: data.length, dates: dates.map(d=>d.toISOString()), message: `✅ Queued ${data.length} posts for ${numDays} days (${selectedDays.join(',')||'Daily'} at ${postTime}) - ${imageUrls.length} images each` })
     }
 
     return res.status(405).json({ error: 'Method not allowed' })
   } catch (err) {
     return res.status(500).json({ error: err.message })
   }
-        }
+}
